@@ -1,10 +1,8 @@
 import { getDb } from './models/db.js';
 import { v4 as uuidv4 } from 'uuid';
+import { fileURLToPath } from 'url';
 
 const db = getDb();
-
-// Clear existing
-db.exec('DELETE FROM answers; DELETE FROM attempts; DELETE FROM paper_questions; DELETE FROM papers; DELETE FROM questions; DELETE FROM interview_questions;');
 
 const insertQuestion = db.prepare(`INSERT INTO questions (id, type, topic, difficulty, question_text, options, correct_answer, explanation, code_starter, test_cases) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 const insertInterview = db.prepare(`INSERT INTO interview_questions (id, type, topic, question_text, model_answer, tips, difficulty) VALUES (?, ?, ?, ?, ?, ?, ?)`);
@@ -415,9 +413,6 @@ for (let i = 0; i < 5; i++) {
   fib('Logical Aptitude', 'basic', '____ is the logical connective meaning "if and only if".', 'iff/equivalence', 'Iff means biconditional logical equivalence.');
 }
 
-// Insert all questions now (including additional)
-insertMany();
-
 // ============ INTERVIEW QUESTIONS ============
 
 const interviews = [
@@ -443,6 +438,21 @@ const insertInterviewMany = db.transaction(() => {
     insertInterview.run(uuidv4(), iq.type, iq.topic, iq.question, iq.model_answer, iq.tips, 'medium');
   }
 });
-insertInterviewMany();
+export function seedDatabase({ reset = false } = {}) {
+  if (reset) {
+    db.exec('DELETE FROM answers; DELETE FROM attempts; DELETE FROM paper_questions; DELETE FROM papers; DELETE FROM interview_practice; DELETE FROM questions; DELETE FROM interview_questions;');
+  }
 
-console.log(`Seeded ${Q.length} questions + ${interviews.length} interview questions`);
+  const questionCount = db.prepare('SELECT COUNT(*) AS count FROM questions').get().count;
+  const interviewCount = db.prepare('SELECT COUNT(*) AS count FROM interview_questions').get().count;
+
+  if (questionCount === 0) insertMany();
+  if (interviewCount === 0) insertInterviewMany();
+
+  return { questions: questionCount === 0 ? Q.length : questionCount, interviews: interviewCount === 0 ? interviews.length : interviewCount };
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const seeded = seedDatabase({ reset: true });
+  console.log(`Seeded ${seeded.questions} questions + ${seeded.interviews} interview questions`);
+}

@@ -6,9 +6,13 @@ import papersRoutes from './routes/papers.js';
 import examRoutes from './routes/exam.js';
 import dashboardRoutes from './routes/dashboard.js';
 import interviewRoutes from './routes/interview.js';
+import { seedDatabase } from './seed.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+const seeded = seedDatabase();
+console.log(`Question bank ready: ${seeded.questions} questions, ${seeded.interviews} interview questions`);
 
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
