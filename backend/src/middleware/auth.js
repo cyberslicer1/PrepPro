@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { getDb } from '../models/db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dataprep-secret-key-2024';
 
@@ -10,6 +11,10 @@ export function authMiddleware(req, res, next) {
   try {
     const token = header.split(' ')[1];
     const decoded = jwt.verify(token, JWT_SECRET);
+    const user = getDb().prepare('SELECT id FROM users WHERE id = ?').get(decoded.id);
+    if (!user) {
+      return res.status(401).json({ error: 'Session expired. Please sign in again.' });
+    }
     req.user = decoded;
     next();
   } catch (err) {
