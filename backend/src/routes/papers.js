@@ -5,8 +5,6 @@ import { authMiddleware } from '../middleware/auth.js';
 
 const router = Router();
 
-const TOPICS = ['Python Basics', 'NumPy', 'Pandas', 'SQL', 'Statistics', 'Data Visualization', 'Logical Aptitude', 'EDA', 'Basic ML', 'Communication'];
-
 // The seed data keeps a reference implementation in code_starter.  Never send
 // that implementation to the candidate; expose only a small editable scaffold.
 function publicQuestion(question) {
@@ -31,70 +29,52 @@ router.post('/generate', authMiddleware, (req, res) => {
   const userId = req.user.id;
   const duration = req.body.duration || 7200;
 
-  // Get questions user has seen in last 2 attempts
-  const recentIds = db.prepare(`
-    SELECT DISTINCT pq.question_id FROM papers p
+  // Question text, rather than ID, is used here because seed data can contain
+  // separate records with the same wording.
+  const seenQuestionTexts = new Set(db.prepare(`
+    SELECT DISTINCT q.question_text
+    FROM papers p
     JOIN paper_questions pq ON p.id = pq.paper_id
+    JOIN questions q ON q.id = pq.question_id
     WHERE p.user_id = ?
-    ORDER BY p.generated_at DESC
-    LIMIT 200
-  `).all(userId).map(r => r.question_id);
-
-  const excludeClause = recentIds.length > 0 ? `AND id NOT IN (${recentIds.map(() => '?').join(',')})` : '';
-  const excludeParams = recentIds.length > 0 ? recentIds : [];
-
-  function sampleQuestions(type, topic, difficulties, perDifficulty) {
-    const results = {};
-    for (const diff of difficulties) {
-      const count = perDifficulty[diff] || 0;
-      if (count <= 0) continue;
-      const sql = `SELECT * FROM questions WHERE type = ? AND topic = ? AND difficulty = ? ${excludeClause} ORDER BY RANDOM() LIMIT ?`;
-      const params = [type, topic, diff, ...excludeParams, Math.ceil(count * 1.5)];
-      let rows = db.prepare(sql).all(...params);
-      // If not enough, include recent ones
-      if (rows.length < count) {
-        const fallback = db.prepare(`SELECT * FROM questions WHERE type = ? AND topic = ? AND difficulty = ? ORDER BY RANDOM() LIMIT ?`).all(type, topic, diff, count);
-        rows = [...rows, ...fallback].slice(0, count);
-      }
-      results[diff] = rows.slice(0, count);
-    }
-    return Object.values(results).flat();
-  }
+  `).all(userId).map(row => row.question_text));
 
   const paperId = uuidv4();
   let sortOrder = 0;
   const questions = [];
-  const usedIds = new Set();
+  function addFreshQuestions(type, difficulty, count, section) {
+    const candidates = db.prepare(`
+      SELECT * FROM questions
+      WHERE type = ? AND difficulty = ?
+      ORDER BY RANDOM()
+    `).all(type, difficulty);
+    const selected = candidates.filter(question => !seenQuestionTexts.has(question.question_text)).slice(0, count);
 
-  function addQuestion(q, section) {
-    if (usedIds.has(q.id)) return;
-    usedIds.add(q.id);
-    questions.push({ paperId, questionId: q.id, section, sortOrder: sortOrder++ });
+    if (selected.length < count) {
+      throw new Error(`Not enough unused ${difficulty} ${type} questions remain to create a new paper.`);
+    }
+
+    for (const question of selected) {
+      seenQuestionTexts.add(question.question_text);
+      questions.push({ paperId, questionId: question.id, section, sortOrder: sortOrder++ });
+    }
   }
 
-  // Distribution: 100 MCQ + 30 FIB across 10 topics
-  // 40% basic (40+12=52), 40% hard (40+12=52), 20% extreme (20+6=26)
-  const mcqPerTopic = 10; // 10 topics * 10 = 100
-  const fibPerTopic = 3;  // 10 topics * 3 = 30
-
-  for (const topic of TOPICS) {
-    // MCQs: 4 basic, 4 hard, 2 extreme per topic
-    const mcqs = sampleQuestions('mcq', topic, ['basic', 'hard', 'extreme'], { basic: 4, hard: 4, extreme: 2 });
-    for (const q of mcqs) addQuestion(q, 'mcq');
-    const fibs = sampleQuestions('fill_blank', topic, ['basic', 'hard', 'extreme'], { basic: 1, hard: 1, extreme: 1 });
-    for (const q of fibs) addQuestion(q, 'fill_blank');
+  try {
+    // 100 MCQ + 30 fill-in-the-blank + 2 coding questions. Selecting from
+    // the full bank prevents duplicated wording in a paper when one topic
+    // has fewer unique questions than the requested per-topic quota.
+    addFreshQuestions('mcq', 'basic', 40, 'mcq');
+    addFreshQuestions('mcq', 'hard', 40, 'mcq');
+    addFreshQuestions('mcq', 'extreme', 20, 'mcq');
+    addFreshQuestions('fill_blank', 'basic', 12, 'fill_blank');
+    addFreshQuestions('fill_blank', 'hard', 12, 'fill_blank');
+    addFreshQuestions('fill_blank', 'extreme', 6, 'fill_blank');
+    addFreshQuestions('coding', 'medium', 1, 'coding');
+    addFreshQuestions('coding', 'hard', 1, 'coding');
+  } catch (error) {
+    return res.status(409).json({ error: error.message });
   }
-
-  // Coding questions: 1 medium, 1 hard
-  const codingMedium = db.prepare(`SELECT * FROM questions WHERE type = 'coding' AND difficulty = 'medium' ${excludeClause} ORDER BY RANDOM() LIMIT 1`).all(...excludeParams);
-  const codingHard = db.prepare(`SELECT * FROM questions WHERE type = 'coding' AND difficulty = 'hard' ${excludeClause} ORDER BY RANDOM() LIMIT 1`).all(...excludeParams);
-  const codingQ = [];
-  if (codingMedium.length > 0) codingQ.push(codingMedium[0]);
-  else codingQ.push(db.prepare("SELECT * FROM questions WHERE type = 'coding' AND difficulty = 'medium' ORDER BY RANDOM() LIMIT 1").get());
-  if (codingHard.length > 0) codingQ.push(codingHard[0]);
-  else codingQ.push(db.prepare("SELECT * FROM questions WHERE type = 'coding' AND difficulty = 'hard' ORDER BY RANDOM() LIMIT 1").get());
-
-  for (const q of codingQ) addQuestion(q, 'coding');
 
   // Insert paper and questions
   const insertPaper = db.prepare('INSERT INTO papers (id, user_id, title, duration) VALUES (?, ?, ?, ?)');

@@ -24,7 +24,7 @@ export default function ModelPapers() {
       fetchPapers();
       navigate(`/exam/${res.data.paperId}`);
     } catch (err) {
-      toast.error('Failed to generate paper');
+      toast.error(err.response?.data?.error || 'Failed to generate paper');
     } finally {
       setGenerating(false);
     }

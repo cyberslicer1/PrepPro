@@ -4,7 +4,7 @@ import { dirname, join } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const DB_PATH = join(__dirname, '../../data.db');
+const DB_PATH = process.env.DB_PATH || join(__dirname, '../../data.db');
 
 let db;
 
